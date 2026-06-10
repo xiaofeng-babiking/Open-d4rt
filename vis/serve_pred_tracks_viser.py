@@ -25,6 +25,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8081)
     parser.add_argument("--max-tracks", type=int, default=0, help="Cap on rendered tracks (evenly subsampled). <=0 keeps all.")
+    parser.add_argument(
+        "--worldtrack-npz",
+        default="",
+        help="Source WorldTrack npz for the RGB frame panel. Defaults to the artifact's stored sequence_path.",
+    )
     return parser.parse_args()
 
 
@@ -84,6 +89,27 @@ def main() -> int:
 
     server = viser.ViserServer(host=args.host, port=int(args.port))
     server.scene.set_up_direction("-y")
+    video_frames: np.ndarray | None = None
+    video_path_str = str(args.worldtrack_npz) or (str(pack["sequence_path"]) if "sequence_path" in pack.files else "")
+    if video_path_str:
+        video_path = Path(video_path_str)
+        if video_path.exists():
+            try:
+                import cv2
+
+                jpeg_bytes = np.asarray(np.load(video_path, allow_pickle=True)["images_jpeg_bytes"])[:num_frames]
+                video_frames = np.stack(
+                    [
+                        cv2.cvtColor(cv2.imdecode(np.frombuffer(b, np.uint8), cv2.IMREAD_UNCHANGED), cv2.COLOR_BGR2RGB)
+                        for b in jpeg_bytes
+                    ],
+                    axis=0,
+                )
+            except Exception as exc:
+                print(f"Warning: RGB frame panel disabled, failed to load {video_path}: {exc}")
+        else:
+            print(f"Warning: RGB frame panel disabled, source npz not found: {video_path}")
+
     dense_count = int(dense_xyz_tg3.shape[1]) if dense_xyz_tg3 is not None else 0
     server.gui.add_markdown(
         f"**{video_name}** — {num_tracks} tracks × {num_frames} frames"
@@ -110,6 +136,11 @@ def main() -> int:
         history_slider = server.gui.add_slider("track_history (0=full)", min=0, max=num_frames, step=1, initial_value=12)
         head_size = server.gui.add_slider("point_size_scale", min=0.2, max=3.0, step=0.1, initial_value=1.0)
         line_width = server.gui.add_slider("line_width", min=1.0, max=8.0, step=0.5, initial_value=3.0)
+
+    frame_image: Any = None
+    if video_frames is not None:
+        with server.gui.add_folder("Video", expand_by_default=True):
+            frame_image = server.gui.add_image(video_frames[0], label="rgb_frame")
 
     dense_controls: tuple[Any, ...] = ()
     if dense_xyz_tg3 is not None:
@@ -173,6 +204,8 @@ def main() -> int:
                     pass
             render_handles.clear()
             frame_idx = int(frame_slider.value)
+            if frame_image is not None:
+                frame_image.image = video_frames[frame_idx]
             pred_qt3 = pred_raw_qt3 * global_scale if bool(apply_scale.value) else pred_raw_qt3
             pred_colors = query_rgb if (str(color_mode.value) == "rgb" and query_rgb is not None) else track_id_colors
             gt_colors = _lighten_colors(pred_colors, amount=0.55)
