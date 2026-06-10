@@ -141,6 +141,7 @@ def main() -> int:
     if video_frames is not None:
         with server.gui.add_folder("Video", expand_by_default=True):
             frame_image = server.gui.add_image(video_frames[0], label="rgb_frame")
+        print(f"RGB frame panel enabled ({int(video_frames.shape[0])} frames from {video_path_str}).")
 
     dense_controls: tuple[Any, ...] = ()
     if dense_xyz_tg3 is not None:
