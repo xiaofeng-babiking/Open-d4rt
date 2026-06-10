@@ -57,18 +57,20 @@ def main() -> int:
     pred_raw_qt3 = np.asarray(pack["pred_tracks_xyz_ref0"], dtype=np.float32).transpose(1, 0, 2)
     pred_vis_qt = np.asarray(pack["pred_visibility"], dtype=bool).T
     global_scale = float(pack["global_scale"])
+    query_rgb = np.asarray(pack["query_rgb"], dtype=np.uint8) if "query_rgb" in pack.files else None
     num_tracks, num_frames = gt_qt3.shape[0], gt_qt3.shape[1]
 
     if int(args.max_tracks) > 0 and num_tracks > int(args.max_tracks):
         pick = np.linspace(0, num_tracks - 1, num=int(args.max_tracks), dtype=np.int64)
         gt_qt3, pred_raw_qt3, pred_vis_qt = gt_qt3[pick], pred_raw_qt3[pick], pred_vis_qt[pick]
+        if query_rgb is not None:
+            query_rgb = query_rgb[pick]
         num_tracks = int(args.max_tracks)
 
     dists = np.linalg.norm(pred_raw_qt3 * global_scale - gt_qt3, axis=-1)
     epe_global = float(np.mean(dists[np.isfinite(dists)]))
 
-    pred_colors = _track_colors(num_tracks)
-    gt_colors = _lighten_colors(pred_colors, amount=0.55)
+    track_id_colors = _track_colors(num_tracks)
 
     gt_flat = gt_qt3.reshape(-1, 3)
     gt_flat = gt_flat[np.isfinite(gt_flat).all(axis=1)]
@@ -91,6 +93,11 @@ def main() -> int:
     with server.gui.add_folder("Display", expand_by_default=True):
         show_gt = server.gui.add_checkbox("show_gt_tracks", initial_value=True)
         show_pred = server.gui.add_checkbox("show_pred_tracks", initial_value=True)
+        color_mode = server.gui.add_dropdown(
+            "color_mode",
+            options=("rgb", "track_id") if query_rgb is not None else ("track_id",),
+            initial_value="rgb" if query_rgb is not None else "track_id",
+        )
         apply_scale = server.gui.add_checkbox("apply_global_scale", initial_value=True)
         hide_invisible = server.gui.add_checkbox("hide_pred_invisible", initial_value=False)
         history_slider = server.gui.add_slider("track_history (0=full)", min=0, max=num_frames, step=1, initial_value=12)
@@ -152,6 +159,8 @@ def main() -> int:
             render_handles.clear()
             frame_idx = int(frame_slider.value)
             pred_qt3 = pred_raw_qt3 * global_scale if bool(apply_scale.value) else pred_raw_qt3
+            pred_colors = query_rgb if (str(color_mode.value) == "rgb" and query_rgb is not None) else track_id_colors
+            gt_colors = _lighten_colors(pred_colors, amount=0.55)
             if bool(show_gt.value):
                 keep = np.isfinite(gt_qt3).all(axis=-1)
                 _render_track_layer(name_prefix="gt", xyz_qt3=gt_qt3, keep_qt=keep, colors=gt_colors, frame_idx=frame_idx)
@@ -161,7 +170,7 @@ def main() -> int:
                     keep &= pred_vis_qt
                 _render_track_layer(name_prefix="pred", xyz_qt3=pred_qt3, keep_qt=keep, colors=pred_colors, frame_idx=frame_idx)
 
-    for control in (frame_slider, show_gt, show_pred, apply_scale, hide_invisible, history_slider, head_size, line_width):
+    for control in (frame_slider, show_gt, show_pred, color_mode, apply_scale, hide_invisible, history_slider, head_size, line_width):
         control.on_update(lambda _event: render())
 
     @server.on_client_connect

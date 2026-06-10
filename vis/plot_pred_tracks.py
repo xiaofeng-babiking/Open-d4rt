@@ -30,6 +30,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--pred-npz", required=True, help="Path to <video_name>_pred.npz from the eval script.")
     parser.add_argument("--output-dir", default="", help="Output directory. Defaults to tmp/track_vis/<video_name>.")
     parser.add_argument("--max-tracks", type=int, default=64, help="Cap on rendered tracks (evenly subsampled).")
+    parser.add_argument(
+        "--color-mode",
+        choices=("auto", "rgb", "track"),
+        default="auto",
+        help="Track colors: frame-0 query pixel RGB (semantics) or per-track rainbow. auto prefers rgb when stored.",
+    )
     parser.add_argument("--fps", type=int, default=10, help="GIF frame rate.")
     parser.add_argument("--trail-frames", type=int, default=12, help="Trailing line length in frames for the GIF.")
     parser.add_argument("--elev", type=float, default=18.0, help="Camera elevation in degrees.")
@@ -83,15 +89,26 @@ def main() -> int:
     dists = np.linalg.norm(pred - gt, axis=-1)
     epe = float(np.mean(dists[np.isfinite(dists)]))
 
+    query_rgb = np.asarray(pack["query_rgb"], dtype=np.uint8) if "query_rgb" in pack.files else None
     if num_tracks > int(args.max_tracks):
         pick = np.linspace(0, num_tracks - 1, num=int(args.max_tracks), dtype=np.int64)
         gt, pred = gt[:, pick], pred[:, pick]
+        if query_rgb is not None:
+            query_rgb = query_rgb[pick]
         num_tracks = int(args.max_tracks)
 
     gt_plot = _to_plot_frame(gt)
     pred_plot = _to_plot_frame(pred)
     bounds = _axis_bounds(np.concatenate([gt_plot, pred_plot], axis=1))
-    colors = cm.hsv(np.linspace(0.0, 0.92, num_tracks))
+    color_mode = args.color_mode
+    if color_mode == "auto":
+        color_mode = "rgb" if query_rgb is not None else "track"
+    if color_mode == "rgb":
+        if query_rgb is None:
+            raise SystemExit(f"{pred_npz_path} has no query_rgb key; regenerate it or use --color-mode track.")
+        colors = np.concatenate([query_rgb.astype(np.float64) / 255.0, np.ones((num_tracks, 1))], axis=1)
+    else:
+        colors = cm.hsv(np.linspace(0.0, 0.92, num_tracks))
 
     # Static overlay: full GT trajectories in gray, aligned predictions colored.
     fig = plt.figure(figsize=(8, 7))
