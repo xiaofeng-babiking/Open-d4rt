@@ -22,3 +22,7 @@ venv/
 .cursorindexingignore
 **/VideoMAE2
 checkpoints/**
+
+.python-version
+
+.agent_view
