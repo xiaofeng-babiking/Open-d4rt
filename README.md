@@ -207,7 +207,8 @@ SAVE_PREDICTIONS=1 bash run_eval_worldtrack.sh
 predicted 3D tracks (`pred_tracks_xyz_ref0` in the frame-0 camera frame and
 `pred_tracks_xyz_local` per-frame camera frames, both `[T, Q, 3]`), predicted
 2D tracks, visibility and confidence, the GT world tracks, the frame-0 query
-points, and the global median-norm alignment scale used by the APD/EPE(global)
+points with their RGB colors (`query_rgb`, for semantic coloring in viewers),
+and the global median-norm alignment scale used by the APD/EPE(global)
 metrics.
 
 ## 🏆 Results

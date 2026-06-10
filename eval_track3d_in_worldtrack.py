@@ -583,6 +583,9 @@ def main() -> int:
             if bool(args.save_predictions):
                 # Track arrays are stored frame-major [T, Q, ...] to match the WorldTrack
                 # release convention; query rows align 1:1 with the metric JSONs.
+                query_cols = np.clip(np.round(query_uv[:, 0]), 0, original_w - 1).astype(np.int64)
+                query_rows = np.clip(np.round(query_uv[:, 1]), 0, original_h - 1).astype(np.int64)
+                query_rgb = np.asarray(video_rgb[0][query_rows, query_cols], dtype=np.uint8)
                 pred_npz_path = subset_out_dir / f"{sample['video_name']}_pred.npz"
                 np.savez_compressed(
                     pred_npz_path,
@@ -595,6 +598,7 @@ def main() -> int:
                     gt_tracks_xyz_world=np.asarray(gt_tracks_world, dtype=np.float64),
                     query_uv_pixels=np.asarray(query_uv, dtype=np.float64),
                     query_uv_norm=np.asarray(query_uv_norm, dtype=np.float32),
+                    query_rgb=query_rgb,
                     global_scale=np.float64(_compute_scale_factor_global(gt_tracks_world, pred_tracks_ref0)),
                     fx_fy_cx_cy=np.asarray(sample["intrinsics"], dtype=np.float64),
                     original_image_size=np.asarray([original_h, original_w], dtype=np.int64),
