@@ -199,7 +199,16 @@ Useful overrides:
 QUERY_CHUNK_SIZE=1024 bash run_eval_worldtrack.sh
 CUDA_VISIBLE_DEVICES=1 DEVICE=cuda bash run_eval_worldtrack.sh
 SUBSETS=adt_mini LIMIT_SEQS=1 NUM_FRAMES=64 bash run_eval_worldtrack.sh
+SAVE_PREDICTIONS=1 bash run_eval_worldtrack.sh
 ```
+
+`SAVE_PREDICTIONS=1` (or `--save-predictions`) additionally writes one
+`<video_name>_pred.npz` per sequence next to the metric JSONs, containing the
+predicted 3D tracks (`pred_tracks_xyz_ref0` in the frame-0 camera frame and
+`pred_tracks_xyz_local` per-frame camera frames, both `[T, Q, 3]`), predicted
+2D tracks, visibility and confidence, the GT world tracks, the frame-0 query
+points, and the global median-norm alignment scale used by the APD/EPE(global)
+metrics.
 
 ## 🏆 Results
 

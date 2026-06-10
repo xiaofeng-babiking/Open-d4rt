@@ -19,6 +19,9 @@ fi
 if [[ "${SAVE_PER_SEQUENCE:-1}" != "0" ]]; then
   ARGS+=(--save-per-sequence)
 fi
+if [[ "${SAVE_PREDICTIONS:-0}" != "0" ]]; then
+  ARGS+=(--save-predictions)
+fi
 
 python eval_track3d_in_worldtrack.py \
   --model-config "$EXP/model.yaml" \

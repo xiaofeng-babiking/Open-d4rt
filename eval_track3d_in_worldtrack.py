@@ -125,6 +125,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--query-chunk-size", type=int, default=4096)
     parser.add_argument("--limit-seqs", type=int, default=0, help="Optional cap per subset. <=0 disables.")
     parser.add_argument("--save-per-sequence", action="store_true", help="Write per-sequence metric JSON files.")
+    parser.add_argument(
+        "--save-predictions",
+        action="store_true",
+        help="Write per-sequence prediction artifacts (<video_name>_pred.npz) with predicted 3D/2D tracks, GT tracks, and query points.",
+    )
     return parser.parse_args()
 
 
@@ -528,12 +533,6 @@ def main() -> int:
             )
             pred_tracks_ref0 = np.asarray(pred_payload["tracks_xyz_ref0"], dtype=np.float64).transpose(1, 0, 2)
             metrics = _metrics_for_sequence(gt_tracks_world=gt_tracks_world, pred_tracks_ref0=pred_tracks_ref0, compute_dyn=True)
-            _, pred_tracks_aligned_global, _, _, _ = _compute_average_pts_within_thresh(
-                gt_tracks_world,
-                pred_tracks_ref0,
-                scaling="global",
-                compute_epe=True,
-            )
             metrics.update(
                 {
                     "video_name": sample["video_name"],
@@ -581,6 +580,29 @@ def main() -> int:
             if bool(args.save_per_sequence):
                 per_seq_path = subset_out_dir / f"{sample['video_name']}.json"
                 per_seq_path.write_text(json.dumps(metrics, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            if bool(args.save_predictions):
+                # Track arrays are stored frame-major [T, Q, ...] to match the WorldTrack
+                # release convention; query rows align 1:1 with the metric JSONs.
+                pred_npz_path = subset_out_dir / f"{sample['video_name']}_pred.npz"
+                np.savez_compressed(
+                    pred_npz_path,
+                    pred_tracks_xyz_ref0=np.asarray(pred_tracks_ref0, dtype=np.float32),
+                    pred_tracks_xyz_local=np.asarray(pred_payload["tracks_xyz_local"], dtype=np.float32).transpose(1, 0, 2),
+                    pred_tracks_uv_norm=np.asarray(pred_payload["tracks_uv_norm"], dtype=np.float32).transpose(1, 0, 2),
+                    pred_visibility=np.asarray(pred_payload["tracks_visibility"], dtype=bool).T,
+                    pred_visibility_logits=np.asarray(pred_payload["tracks_visibility_logits"], dtype=np.float32).T,
+                    pred_confidence=np.asarray(pred_payload["tracks_confidence"], dtype=np.float32).T,
+                    gt_tracks_xyz_world=np.asarray(gt_tracks_world, dtype=np.float64),
+                    query_uv_pixels=np.asarray(query_uv, dtype=np.float64),
+                    query_uv_norm=np.asarray(query_uv_norm, dtype=np.float32),
+                    global_scale=np.float64(_compute_scale_factor_global(gt_tracks_world, pred_tracks_ref0)),
+                    fx_fy_cx_cy=np.asarray(sample["intrinsics"], dtype=np.float64),
+                    original_image_size=np.asarray([original_h, original_w], dtype=np.int64),
+                    model_image_size=np.asarray([model_h, model_w], dtype=np.int64),
+                    clip_frames=np.int64(pred_payload["clip_frames"]),
+                    sequence_path=str(seq_path),
+                )
+                logger.info("Saved prediction artifacts to %s", pred_npz_path)
 
         subset_summary = _aggregate_results(subset_results)
         subset_summary["sequences"] = subset_results
