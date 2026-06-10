@@ -60,6 +60,11 @@ def main() -> int:
     query_rgb = np.asarray(pack["query_rgb"], dtype=np.uint8) if "query_rgb" in pack.files else None
     num_tracks, num_frames = gt_qt3.shape[0], gt_qt3.shape[1]
 
+    # Optional dense scene layer, stored frame-major [T, G, 3] / [T, G].
+    dense_xyz_tg3 = np.asarray(pack["dense_tracks_xyz_ref0"], dtype=np.float32) if "dense_tracks_xyz_ref0" in pack.files else None
+    dense_vis_tg = np.asarray(pack["dense_visibility"], dtype=bool) if "dense_visibility" in pack.files else None
+    dense_rgb_g = np.asarray(pack["dense_rgb"], dtype=np.uint8) if "dense_rgb" in pack.files else None
+
     if int(args.max_tracks) > 0 and num_tracks > int(args.max_tracks):
         pick = np.linspace(0, num_tracks - 1, num=int(args.max_tracks), dtype=np.int64)
         gt_qt3, pred_raw_qt3, pred_vis_qt = gt_qt3[pick], pred_raw_qt3[pick], pred_vis_qt[pick]
@@ -79,9 +84,11 @@ def main() -> int:
 
     server = viser.ViserServer(host=args.host, port=int(args.port))
     server.scene.set_up_direction("-y")
+    dense_count = int(dense_xyz_tg3.shape[1]) if dense_xyz_tg3 is not None else 0
     server.gui.add_markdown(
-        f"**{video_name}** — {num_tracks} tracks × {num_frames} frames  \n"
-        f"EPE(global) = {epe_global:.4f} m, global scale = {global_scale:.4f}"
+        f"**{video_name}** — {num_tracks} tracks × {num_frames} frames"
+        + (f" + {dense_count} dense points" if dense_count else "")
+        + f"  \nEPE(global) = {epe_global:.4f} m, global scale = {global_scale:.4f}"
     )
 
     with server.gui.add_folder("Timeline", expand_by_default=True):
@@ -103,6 +110,14 @@ def main() -> int:
         history_slider = server.gui.add_slider("track_history (0=full)", min=0, max=num_frames, step=1, initial_value=12)
         head_size = server.gui.add_slider("point_size_scale", min=0.2, max=3.0, step=0.1, initial_value=1.0)
         line_width = server.gui.add_slider("line_width", min=1.0, max=8.0, step=0.5, initial_value=3.0)
+
+    dense_controls: tuple[Any, ...] = ()
+    if dense_xyz_tg3 is not None:
+        with server.gui.add_folder("Dense scene", expand_by_default=True):
+            show_dense = server.gui.add_checkbox("show_dense_points", initial_value=True)
+            dense_hide_invisible = server.gui.add_checkbox("dense_hide_invisible", initial_value=True)
+            dense_size = server.gui.add_slider("dense_point_size_scale", min=0.2, max=3.0, step=0.1, initial_value=1.0)
+        dense_controls = (show_dense, dense_hide_invisible, dense_size)
 
     render_handles: list[Any] = []
     render_lock = threading.Lock()
@@ -169,8 +184,23 @@ def main() -> int:
                 if bool(hide_invisible.value):
                     keep &= pred_vis_qt
                 _render_track_layer(name_prefix="pred", xyz_qt3=pred_qt3, keep_qt=keep, colors=pred_colors, frame_idx=frame_idx)
+            if dense_xyz_tg3 is not None and bool(show_dense.value):
+                points = dense_xyz_tg3[frame_idx] * (global_scale if bool(apply_scale.value) else 1.0)
+                keep = np.isfinite(points).all(axis=-1)
+                if dense_vis_tg is not None and bool(dense_hide_invisible.value):
+                    keep &= dense_vis_tg[frame_idx]
+                if np.any(keep):
+                    render_handles.append(
+                        server.scene.add_point_cloud(
+                            "/dense/points",
+                            points=points[keep].astype(np.float32),
+                            colors=(dense_rgb_g[keep] if dense_rgb_g is not None else np.full((int(keep.sum()), 3), 180, dtype=np.uint8)),
+                            point_size=0.006 * radius * float(dense_size.value),
+                            point_shape="circle",
+                        )
+                    )
 
-    for control in (frame_slider, show_gt, show_pred, color_mode, apply_scale, hide_invisible, history_slider, head_size, line_width):
+    for control in (frame_slider, show_gt, show_pred, color_mode, apply_scale, hide_invisible, history_slider, head_size, line_width, *dense_controls):
         control.on_update(lambda _event: render())
 
     @server.on_client_connect

@@ -209,7 +209,9 @@ predicted 3D tracks (`pred_tracks_xyz_ref0` in the frame-0 camera frame and
 2D tracks, visibility and confidence, the GT world tracks, the frame-0 query
 points with their RGB colors (`query_rgb`, for semantic coloring in viewers),
 and the global median-norm alignment scale used by the APD/EPE(global)
-metrics.
+metrics. Adding `DENSE_GRID=64` (or `--dense-grid 64`) also tracks a 64×64
+frame-0 grid and stores it as RGB-colored `dense_*` keys, giving viewers a
+dense animated scene point cloud; metrics are unaffected.
 
 ## 🏆 Results
 

@@ -25,6 +25,9 @@ fi
 if [[ "${SAVE_PREDICTIONS:-0}" != "0" ]]; then
   ARGS+=(--save-predictions)
 fi
+if [[ -n "${DENSE_GRID:-}" ]]; then
+  ARGS+=(--dense-grid "$DENSE_GRID")
+fi
 
 python eval_track3d_in_worldtrack.py \
   --model-config "$EXP/model.yaml" \
