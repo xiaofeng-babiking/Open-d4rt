@@ -23,7 +23,7 @@ import cv2
 import numpy as np
 import torch
 
-from infer_track_3d import _infer_tracks, _resolve_device, _resize_video, _unwrap_state_dict
+from infer_track_3d import _grid_query_points, _infer_tracks, _resolve_device, _resize_video, _unwrap_state_dict
 from src.core import build_logger, load_checkpoint, load_yaml_config, seed_everything
 from src.model import build_model
 
@@ -135,6 +135,12 @@ def parse_args() -> argparse.Namespace:
         "--save-predictions",
         action="store_true",
         help="Write per-sequence prediction artifacts (<video_name>_pred.npz) with predicted 3D/2D tracks, GT tracks, and query points.",
+    )
+    parser.add_argument(
+        "--dense-grid",
+        type=int,
+        default=0,
+        help="If >0 with --save-predictions, additionally track an NxN frame-0 grid and store dense_* keys (RGB-colored scene points for visualization). Not used by metrics.",
     )
     return parser.parse_args()
 
@@ -594,6 +600,34 @@ def main() -> int:
                 query_cols = np.clip(np.round(query_uv[:, 0]), 0, original_w - 1).astype(np.int64)
                 query_rows = np.clip(np.round(query_uv[:, 1]), 0, original_h - 1).astype(np.int64)
                 query_rgb = np.asarray(video_rgb[0][query_rows, query_cols], dtype=np.uint8)
+                dense_arrays: dict[str, np.ndarray] = {}
+                if int(args.dense_grid) > 0:
+                    grid_uv = _grid_query_points(
+                        width=original_w,
+                        height=original_h,
+                        cols=int(args.dense_grid),
+                        rows=int(args.dense_grid),
+                        margin_ratio=0.0,
+                        max_points=int(args.dense_grid) ** 2,
+                    )
+                    grid_uv_norm = grid_uv.copy()
+                    grid_uv_norm[:, 0] /= float(max(original_w - 1, 1))
+                    grid_uv_norm[:, 1] /= float(max(original_h - 1, 1))
+                    dense_payload = _infer_tracks(
+                        model=model,
+                        video_model_rgb=video_model_rgb,
+                        query_uv_norm=np.clip(grid_uv_norm, 0.0, 1.0).astype(np.float32),
+                        query_chunk_size=int(args.query_chunk_size),
+                    )
+                    grid_cols = np.clip(np.round(grid_uv[:, 0]), 0, original_w - 1).astype(np.int64)
+                    grid_rows = np.clip(np.round(grid_uv[:, 1]), 0, original_h - 1).astype(np.int64)
+                    dense_arrays = {
+                        "dense_tracks_xyz_ref0": np.asarray(dense_payload["tracks_xyz_ref0"], dtype=np.float32).transpose(1, 0, 2),
+                        "dense_visibility": np.asarray(dense_payload["tracks_visibility"], dtype=bool).T,
+                        "dense_confidence": np.asarray(dense_payload["tracks_confidence"], dtype=np.float32).T,
+                        "dense_uv_pixels": np.asarray(grid_uv, dtype=np.float64),
+                        "dense_rgb": np.asarray(video_rgb[0][grid_rows, grid_cols], dtype=np.uint8),
+                    }
                 pred_npz_path = subset_out_dir / f"{sample['video_name']}_pred.npz"
                 np.savez_compressed(
                     pred_npz_path,
@@ -613,6 +647,7 @@ def main() -> int:
                     model_image_size=np.asarray([model_h, model_w], dtype=np.int64),
                     clip_frames=np.int64(pred_payload["clip_frames"]),
                     sequence_path=str(seq_path),
+                    **dense_arrays,
                 )
                 logger.info("Saved prediction artifacts to %s", pred_npz_path)
 
