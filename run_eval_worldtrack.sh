@@ -16,6 +16,9 @@ ARGS=()
 if [[ -n "${LIMIT_SEQS:-}" ]]; then
   ARGS+=(--limit-seqs "$LIMIT_SEQS")
 fi
+if [[ -n "${SEQ_FILTER:-}" ]]; then
+  ARGS+=(--seq-filter "$SEQ_FILTER")
+fi
 if [[ "${SAVE_PER_SEQUENCE:-1}" != "0" ]]; then
   ARGS+=(--save-per-sequence)
 fi

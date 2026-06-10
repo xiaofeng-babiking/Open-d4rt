@@ -13,6 +13,7 @@ Protocol alignment target:
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import json
 from collections import defaultdict
 from pathlib import Path
@@ -124,6 +125,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--query-chunk-size", type=int, default=4096)
     parser.add_argument("--limit-seqs", type=int, default=0, help="Optional cap per subset. <=0 disables.")
+    parser.add_argument(
+        "--seq-filter",
+        default="",
+        help="Optional glob on sequence stems, e.g. 'basketball_*'. Empty keeps all sequences.",
+    )
     parser.add_argument("--save-per-sequence", action="store_true", help="Write per-sequence metric JSON files.")
     parser.add_argument(
         "--save-predictions",
@@ -487,6 +493,8 @@ def main() -> int:
             logger.warning("Skipping missing subset directory: %s", subset_dir)
             continue
         seq_paths = sorted(subset_dir.glob("*.npz"))
+        if str(args.seq_filter):
+            seq_paths = [path for path in seq_paths if fnmatch.fnmatch(path.stem, str(args.seq_filter))]
         if int(args.limit_seqs) > 0:
             seq_paths = seq_paths[: int(args.limit_seqs)]
         if not seq_paths:
