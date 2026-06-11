@@ -1,0 +1,209 @@
+experiment:
+  name: d4rt_vggt_sixmix_clip48
+  seed: 42
+  output_dir: output/exp_vggt_sixmix/vggt_sixmix_clip48
+runtime:
+  framework: pytorch_reimplementation_of_kauldron_protocol
+  mixed_precision: true
+  fail_on_non_finite: true
+  batch_size: 2
+  train_batch_size: 2
+  val_batch_size: 2
+  num_workers: 2
+  train_num_workers: 12
+  val_num_workers: 1
+  pin_memory: true
+  persistent_workers: true
+  prefetch_factor: 1
+  timeout: 300
+  data_parallel: false
+  train_prefetch_factor: 2
+  debug_slow_stage_seconds: 20
+data:
+  canonical_schema_doc: docs/data_schema.md
+  clip_frames: 48
+  image_size:
+  - 256
+  - 256
+  train_dataset_type: mixture_raw
+  val_dataset_type: mixture_raw
+  bad_sample_registry:
+    path: data/meta/bad_sample.json
+    max_retries: 64
+  # VGGT/DUSt3R-style preprocessed datasets (per-frame rgb + metric depth +
+  # cam2world pose). All static-scene sources; supervision is built with the
+  # shared depth-reprojection query builder. PointOdyssey / DynamicReplica /
+  # Kubric are intentionally absent: their processed exports lack the track
+  # annotations D4RT needs for dynamic supervision.
+  train_dataset_mixture:
+  - tartanair_vggt
+  - mvs_synth_vggt
+  - scannet_vggt
+  - blendermvs_vggt
+  - co3d_vggt
+  - vkitti_vggt
+  val_dataset_mixture:
+  - tartanair_vggt
+  - mvs_synth_vggt
+  - scannet_vggt
+  - blendermvs_vggt
+  - co3d_vggt
+  - vkitti_vggt
+  mixture_sampling_weights:
+    tartanair_vggt: 1.6
+    mvs_synth_vggt: 1.2
+    scannet_vggt: 1.3
+    blendermvs_vggt: 1.8
+    co3d_vggt: 1.3
+    vkitti_vggt: 1.2
+  tartanair_vggt:
+    scene_index_cache: data/meta/vggt_scene_cache
+    root: /jfs/Data_4DFF/train_data/tartanair/train
+    max_depth_m: 1000.0
+  mvs_synth_vggt:
+    scene_index_cache: data/meta/vggt_scene_cache
+    root: /jfs/Data_4DFF/train_data/mvs_synth/train
+    max_depth_m: 1000.0
+    depth_clip_percentile: 98.0
+    min_depth_valid_ratio: 0.01
+    min_valid_frames_ratio: 0.5
+  scannet_vggt:
+    scene_index_cache: data/meta/vggt_scene_cache
+    root: /jfs/Data_4DFF/train_data/scannet/scans_train
+  blendermvs_vggt:
+    scene_index_cache: data/meta/vggt_scene_cache
+    roots:
+    - /jfs/Data_4DFF/train_data/blendedmvs
+    - /jfs/Data_4DFF/train_data/blendedmvs_previous/train
+    max_depth_m: 1000.0
+    depth_clip_percentile: 98.0
+    min_depth_valid_ratio: 0.01
+    min_valid_frames_ratio: 0.5
+  co3d_vggt:
+    scene_index_cache: data/meta/vggt_scene_cache
+    root: /jfs/Data_4DFF/train_data/co3d
+    use_depth_masks: true
+  vkitti_vggt:
+    scene_index_cache: data/meta/vggt_scene_cache
+    root: /jfs/Data_4DFF/train_data/vkitti/train
+    variants:
+    - clone
+    cameras:
+    - Camera_0
+    max_depth_m: 655.0
+    static_consistency_filter: true
+    static_consistency_rel_threshold: 0.05
+train_sampling:
+  queries_per_clip: 4096
+  hard_query_ratio: 0.2
+  hard_query_source: depth_and_motion_boundaries_sobel
+  timestep_sampling:
+    t_src: uniform
+    t_tgt: uniform
+    t_cam: uniform
+    prob_t_tgt_equals_t_cam: 0.4
+    t_src_tgt_delta_mode: static_local_global
+loss:
+  total: weighted_sum
+  xyz_3d:
+    enabled: true
+    type: l1
+    weight_lambda_3d: 1.0
+    normalize_by_mean_depth: true
+    value_transform: sign_x_log1p_abs_x
+  uv_2d:
+    enabled: true
+    type: l1
+    weight_lambda_2d: 0.1
+  visibility:
+    enabled: true
+    type: bce
+    weight_lambda_vis: 0.1
+  displacement:
+    enabled: true
+    type: l1
+    weight_lambda_disp: 0.1
+  normal:
+    enabled: true
+    type: cosine_similarity
+    weight_lambda_normal: 0.4
+  confidence:
+    enabled: true
+    mode: main_text
+    weight_lambda_conf: 0.2
+    confidence_penalty: -log(c)
+    confidence_weights_xyz_error: true
+    lconf_ablation:
+      enabled: false
+      type: exp_neg_abs_xyz_error_l1
+      weight_lambda_lconf: 0.2
+  apply_only_where_gt_available: true
+  reprojection_uv_from_xyz:
+    enabled: false
+optimizer:
+  type: adamw
+  weight_decay: 0.03
+  gradient_clip_l2_norm: 10.0
+  learning_rate:
+    schedule: cosine_decay
+    warmup_steps: 500
+    peak_lr: 4.0e-06
+    final_lr: 4.0e-07
+augmentation:
+  color_jitter:
+    enabled: false
+  color_drop:
+    enabled: false
+    probability: 0.0
+  gaussian_blur:
+    enabled: false
+    probability: 0.0
+  random_crop:
+    enabled: false
+    scale_min_max:
+    - 1.0
+    - 1.0
+    random_zoom_in_probability: 0.0
+  temporal_subsample:
+    enabled: true
+    stride_min: 1
+    stride_max: 2
+schedule:
+  total_steps: 30000
+  paper_reference_runtime: H200 8-GPU no-augmentation refinement for global median
+    alignment.
+  local_repro_override:
+    enabled: false
+checkpoint:
+  save_every_steps: 1000
+  step_save_every_steps: 1000
+  keep_last_k: 20
+  keep_best_by: val_loss_total
+  auto_eval_worldtrack_step:
+    # Disabled: data/worldtrack_release is not available on this machine.
+    enabled: false
+    num_frames: 64
+    script: scripts/eval_worldtrack/run_batch_eval_worldtrack_step_ckpts.sh
+    log_dir_name: eval_worldtrack_step_auto_logs
+    env:
+      GPUS: 4,5,6,7
+      MAX_PARALLEL: 4
+      PROCS_PER_GPU: 1
+logging:
+  log_every_steps: 100
+  validate_every_steps: 2000
+  validate_max_batches_global: 64
+  validate_max_samples_global: 256
+  per_dataset_validation:
+    enabled: false
+    max_batches_global: 0
+    max_samples_global: 512
+  visualization:
+    enabled: true
+    train_every_steps: 1000
+    on_validation: true
+    max_samples: 1
+    max_points: 128
+    max_lines: -1
+    include_3d: true
+    save_png: true

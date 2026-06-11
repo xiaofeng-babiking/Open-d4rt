@@ -33,6 +33,11 @@ from .raw_augment import (
 from .scannet_raw_dataset import ScannetRawConfig, ScannetRawDataset
 from .seeding import configure_dataset_seeding, seed_dataloader_worker
 from .tartanair_raw_dataset import TartanairRawConfig, TartanairRawDataset
+from .vggt_processed_dataset import (
+    KNOWN_VARIANTS as VGGT_VARIANTS,
+    VggtProcessedConfig,
+    VggtProcessedDataset,
+)
 from .virtual_kitti2_raw_dataset import VirtualKitti2RawConfig, VirtualKitti2RawDataset
 
 DATASET_REGISTRY = Registry("dataset")
@@ -482,6 +487,63 @@ def _build_mvs_synth_raw(split: str, cfg: Any, manifest_paths: list[str] | None 
     )
 
 
+def _build_vggt_processed(variant: str, split: str, cfg: Any):
+    base = f"data.{variant}_vggt"
+    roots_raw = cfg.get_path(f"{base}.roots", None)
+    roots = tuple(Path(str(p)) for p in roots_raw) if isinstance(roots_raw, (list, tuple)) and roots_raw else None
+    root_raw = cfg.get_path(f"{base}.root", None)
+    root = Path(str(root_raw)) if root_raw else (None if roots else Path(f"data/vggt_processed/{variant}"))
+    effective_split = str(cfg.get_path(f"{base}.split_override", split))
+    return VggtProcessedDataset(
+        VggtProcessedConfig(
+            root=root,
+            roots=roots,
+            variant=variant,
+            split=effective_split,
+            clip_frames=_clip_frames(cfg),
+            image_size=_image_size(cfg),
+            queries_per_clip=_queries_per_clip(cfg),
+            hard_query_ratio=_hard_query_ratio(cfg),
+            prob_t_tgt_equals_t_cam=_prob_t_tgt_equals_t_cam(cfg),
+            **_query_timestep_delta_kwargs(cfg),
+            training=(split == "train"),
+            split_modulo=int(cfg.get_path(f"{base}.split_modulo", 20)),
+            max_scenes=_optional_int(cfg.get_path(f"{base}.max_scenes", None)),
+            max_depth_m=float(cfg.get_path(f"{base}.max_depth_m", 1e5)),
+            depth_clip_percentile=float(cfg.get_path(f"{base}.depth_clip_percentile", 0.0)),
+            min_depth_valid_ratio=float(cfg.get_path(f"{base}.min_depth_valid_ratio", 0.0)),
+            min_valid_frames_ratio=float(cfg.get_path(f"{base}.min_valid_frames_ratio", 0.0)),
+            vkitti_variants=tuple(_to_str_list(cfg.get_path(f"{base}.variants", None)) or ("clone",)),
+            vkitti_cameras=tuple(_to_str_list(cfg.get_path(f"{base}.cameras", None)) or ("Camera_0",)),
+            use_co3d_masks=bool(cfg.get_path(f"{base}.use_depth_masks", True)),
+            static_consistency_filter=bool(
+                cfg.get_path(f"{base}.static_consistency_filter", variant == "vkitti")
+            ),
+            static_consistency_rel_threshold=float(
+                cfg.get_path(f"{base}.static_consistency_rel_threshold", 0.05)
+            ),
+            augment=augment_cfg_from_train_config(cfg),
+            bad_sample_registry_path=_bad_sample_registry_path(cfg),
+            max_sample_retries=_bad_sample_max_retries(cfg),
+            scene_index_cache=(
+                Path(str(cache_dir)) if (cache_dir := cfg.get_path(f"{base}.scene_index_cache", None)) else None
+            ),
+        )
+    )
+
+
+def _register_vggt_processed_builders() -> None:
+    for variant in VGGT_VARIANTS:
+        def _builder(split: str, cfg: Any, manifest_paths: list[str] | None = None, _variant: str = variant):
+            del manifest_paths
+            return _build_vggt_processed(_variant, split, cfg)
+
+        DATASET_REGISTRY.register(f"{variant}_vggt")(_builder)
+
+
+_register_vggt_processed_builders()
+
+
 def _scannet_split_file(split: str, cfg: Any) -> Path:
     split_files = cfg.get_path("data.scannet.split_files", {})
     if isinstance(split_files, dict):
@@ -602,6 +664,8 @@ def _resolve_mixture_sources(split: str, cfg: Any) -> list[tuple[str, str]]:
         "tartanair": "tartanair_raw",
         "virtual_kitti2": "virtual_kitti2_raw",
     }
+    # VGGT/DUSt3R-style preprocessed dataset adapters (see vggt_processed_dataset.py).
+    source_to_builder.update({f"{variant}_vggt": f"{variant}_vggt" for variant in VGGT_VARIANTS})
 
     resolved: list[tuple[str, str]] = []
     unknown_sources: list[str] = []

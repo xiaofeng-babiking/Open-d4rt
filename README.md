@@ -162,6 +162,57 @@ bash scripts/train_worldtrack_sota_ninemix_clip48_a_query_local_lr4e-6_8gpu.sh
 Full training setup, required checkpoints, dataset root overrides, and smoke
 test commands are documented in [docs/training.md](docs/training.md).
 
+### Training on VGGT/DUSt3R-preprocessed datasets (sixmix)
+
+When the raw 9Mix datasets are not available but VGGT/DUSt3R-style
+preprocessed exports are (per-frame `rgb` + metric `depth` + cam2world `cam`
+files), use the adapters in `src/data/vggt_processed_dataset.py`. Supported
+sources: TartanAir, MVS-Synth, ScanNet, BlendedMVS (both the npz and
+safetensor camera formats), CO3D, and Virtual KITTI 2. All six are
+static-scene sources supervised through the shared depth-reprojection query
+builder. PointOdyssey, Dynamic Replica, and Kubric are intentionally absent:
+the preprocessed exports drop their track annotations, so this mixture
+provides no nonzero supervision for the displacement (motion) head — it
+sharpens geometry, reprojection, and camera structure only.
+
+Point the dataset roots in `configs/train_vggt_sixmix.yaml`
+(`data.<source>_vggt.root`, mixture sources are named `<source>_vggt`), then:
+
+```bash
+# 300-step convergence smoke test (4 GPUs)
+bash scripts/smoke_train_vggt_sixmix.sh
+
+# full run (config schedule; GPUs, output dir, retention via env overrides)
+bash scripts/train_vggt_sixmix.sh
+
+# resume an interrupted run
+bash scripts/train_vggt_sixmix.sh --resume "$OUT_DIR/checkpoints/last.ckpt"
+```
+
+Guidelines:
+
+- **Scene-index cache.** First discovery walks every scene directory, which
+  takes minutes per dataset on network filesystems. The result is cached as
+  JSON under `data/meta/vggt_scene_cache/` (configurable via
+  `data.<source>_vggt.scene_index_cache`); later runs start instantly. Delete
+  a cache file to force a rescan after the data changes.
+- **Dataloader workers.** Each 48-frame clip reads ~144 small files; on
+  network storage the per-file latency, not bandwidth, is the bottleneck.
+  Keep `runtime.train_num_workers` at 12+ per GPU — raising it from 4 to 12
+  measured 3.6× training throughput (data-wait p95 dropped from 25s to 0).
+- **Checkpoint storage.** Checkpoints are ~13 GB each; point the output dir
+  at large storage and bound retention with `checkpoint.keep_last_k` (the
+  full launcher defaults to 5).
+- **Virtual KITTI 2.** The static-consistency filter is enabled by default
+  (`data.vkitti_vggt.static_consistency_filter`): it invalidates pixels that
+  violate static-world reprojection between adjacent frames, keeping moving
+  vehicles out of the static-scene supervision.
+- **Auto WorldTrack eval** is disabled in this config; re-enable it only if
+  `data/worldtrack_release` is present.
+- **Validating the adapters.** `python -m pytest tests/` runs the adapter
+  test suite, including synthetic exact-geometry fixtures and real-data
+  integration tests that auto-skip when the data mount is absent.
+
 ## 📊 Evaluation
 
 Run a quick smoke test on one `adt_mini` sequence:
