@@ -481,19 +481,26 @@ def _discover_co3d(cfg: VggtProcessedConfig) -> list[_Scene]:
             masks_dir = seq_dir / "masks"
             if not (images_dir.is_dir() and depths_dir.is_dir()):
                 continue
+            # One directory listing per kind: per-frame exists() probes are ruinously
+            # slow on network filesystems (hundreds of stat round-trips per sequence).
             rgb = _index_by_id(sorted(images_dir.glob("frame*.jpg")), _co3d_id_parser)
             cam = _index_by_id(sorted(images_dir.glob("frame*.npz")), _co3d_id_parser)
+            depth = _index_by_id(sorted(depths_dir.glob("frame*.geometric.png")), _co3d_id_parser)
+            masks = (
+                _index_by_id(sorted(masks_dir.glob("frame*.png")), _co3d_id_parser)
+                if cfg.use_co3d_masks and masks_dir.is_dir()
+                else {}
+            )
             frames: list[_Frame] = []
-            for i in sorted(set(rgb) & set(cam)):
-                depth_path = depths_dir / f"{rgb[i].name}.geometric.png"
-                if not depth_path.exists():
-                    continue
-                mask_path: Path | None = None
-                if cfg.use_co3d_masks:
-                    candidate = masks_dir / f"{rgb[i].stem}.png"
-                    mask_path = candidate if candidate.exists() else None
+            for i in sorted(set(rgb) & set(cam) & set(depth)):
                 frames.append(
-                    _Frame(frame_id=i, rgb_path=rgb[i], depth_path=depth_path, cam_path=cam[i], mask_path=mask_path)
+                    _Frame(
+                        frame_id=i,
+                        rgb_path=rgb[i],
+                        depth_path=depth[i],
+                        cam_path=cam[i],
+                        mask_path=masks.get(i),
+                    )
                 )
             if frames:
                 scenes.append(_Scene(scene_id=f"{category_dir.name}/{seq_dir.name}", frames=frames))
